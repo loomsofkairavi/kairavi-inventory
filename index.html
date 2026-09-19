@@ -12,6 +12,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-storage-compat.js"></script>
 
 <!-- QR generate + scan -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
@@ -482,15 +483,15 @@
   };
   var CONFIGURED = firebaseConfig.apiKey !== "REPLACE_ME";
 
-  // Photos are stored as compressed JPEG data URLs directly in the
-  // Firestore document (no Firebase Storage / billing plan needed).
-  // Keep each photo comfortably under Firestore's 1 MiB document limit.
-  var PHOTO_MAX_DATAURL_BYTES = 700000;
+  // Photos are uploaded to Firebase Storage at full resolution (no
+  // client-side compression) — only a sane upper bound to avoid an
+  // accidental multi-hundred-MB upload from a phone.
+  var MAX_PHOTO_UPLOAD_BYTES = 20 * 1024 * 1024; // 20MB
 
   var sarees = [];
   var currentPhotoFile = null;
   var html5QrInstance = null;
-  var auth = null, db = null;
+  var auth = null, db = null, storage = null;
 
   function $(sel, root){ return (root||document).querySelector(sel); }
   function $all(sel, root){ return Array.prototype.slice.call((root||document).querySelectorAll(sel)); }
@@ -555,6 +556,7 @@
     firebase.initializeApp(firebaseConfig);
     auth = firebase.auth();
     db = firebase.firestore();
+    storage = firebase.storage();
 
     auth.onAuthStateChanged(function(user){
       if (user){
@@ -758,47 +760,25 @@
     }
   });
 
-  // Resizes/compresses the photo on-device and resolves a JPEG data URL —
-  // no upload, no Storage bucket, no billing plan required. Shrinks
-  // dimensions and quality together until it fits PHOTO_MAX_DATAURL_BYTES.
-  function compressPhotoToDataUrl(file){
+  // Uploads the photo to Firebase Storage at full resolution — no resize,
+  // no recompression — and resolves { url, path } for the Firestore record.
+  function uploadPhoto(file, productId){
     return new Promise(function(resolve, reject){
-      var reader = new FileReader();
-      reader.onerror = function(){ reject(new Error('read_failed')); };
-      reader.onload = function(ev){
-        var img = new Image();
-        img.onerror = function(){ reject(new Error('decode_failed')); };
-        img.onload = function(){
-          var maxDim = 1000;
-          var w = img.width || 1, h = img.height || 1;
-          if (w > maxDim || h > maxDim){
-            if (w >= h){ h = Math.round(h * maxDim / w); w = maxDim; }
-            else { w = Math.round(w * maxDim / h); h = maxDim; }
-          }
-          var canvas = document.createElement('canvas');
-          var ctx = canvas.getContext('2d');
-          canvas.width = w; canvas.height = h;
-          ctx.drawImage(img, 0, 0, w, h);
-          var quality = 0.82;
-          var dataUrl = canvas.toDataURL('image/jpeg', quality);
-          while (dataUrl.length > PHOTO_MAX_DATAURL_BYTES && quality > 0.35){
-            quality -= 0.12;
-            dataUrl = canvas.toDataURL('image/jpeg', quality);
-          }
-          if (dataUrl.length > PHOTO_MAX_DATAURL_BYTES){
-            var scale = Math.sqrt(PHOTO_MAX_DATAURL_BYTES / dataUrl.length);
-            var w2 = Math.max(200, Math.round(w * scale));
-            var h2 = Math.max(260, Math.round(h * scale));
-            canvas.width = w2; canvas.height = h2;
-            ctx.clearRect(0, 0, w2, h2);
-            ctx.drawImage(img, 0, 0, w2, h2);
-            dataUrl = canvas.toDataURL('image/jpeg', 0.55);
-          }
-          resolve(dataUrl);
-        };
-        img.src = ev.target.result;
-      };
-      reader.readAsDataURL(file);
+      if (file.size > MAX_PHOTO_UPLOAD_BYTES){
+        reject(new Error('too_large'));
+        return;
+      }
+      var ext = 'jpg';
+      if (file.name && file.name.indexOf('.') !== -1){
+        ext = file.name.split('.').pop().toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
+      }
+      var path = 'saree-photos/' + productId + '-' + Date.now() + '.' + ext;
+      var ref = storage.ref(path);
+      ref.put(file, { contentType: file.type || 'image/jpeg' }).then(function(snapshot){
+        return snapshot.ref.getDownloadURL();
+      }).then(function(url){
+        resolve({ url: url, path: path });
+      }).catch(reject);
     });
   }
 
@@ -815,12 +795,18 @@
       var base = baseProductId(color, t.code, cost);
       var productId = await allocateProductId(base);
 
-      var photoData = null;
+      var photoUrl = null, photoPath = null;
       if (currentPhotoFile){
         try{
-          photoData = await compressPhotoToDataUrl(currentPhotoFile);
+          var uploaded = await uploadPhoto(currentPhotoFile, productId);
+          photoUrl = uploaded.url;
+          photoPath = uploaded.path;
         }catch(err){
-          showToast('Photo could not be processed — saved without photo.');
+          if (err && err.message === 'too_large'){
+            showToast('Photo is over 20MB — saved without photo.');
+          } else {
+            showToast('Photo could not be uploaded — saved without photo.');
+          }
         }
       }
 
@@ -830,7 +816,8 @@
         typeName: t.name,
         typeCode: t.code,
         landingCost: cost,
-        photoData: photoData,
+        photoUrl: photoUrl,
+        photoPath: photoPath,
         status: 'available',
         notes: $('#f-notes').value.trim(),
         addedBy: currentUser(),
@@ -884,8 +871,8 @@
       var card = document.createElement('div');
       card.className = 'card';
       card.dataset.id = r.productId;
-      var photoHtml = r.photoData
-        ? '<img class="photo" src="' + r.photoData + '" alt="' + escapeHtml(r.color) + ' ' + escapeHtml(r.typeName) + '" />'
+      var photoHtml = r.photoUrl
+        ? '<img class="photo" src="' + r.photoUrl + '" alt="' + escapeHtml(r.color) + ' ' + escapeHtml(r.typeName) + '" />'
         : '<div class="swatch">' + escapeHtml(r.color || 'No photo') + '</div>';
       card.innerHTML =
         photoHtml +
@@ -908,7 +895,7 @@
     var r = findRecord(id);
     if (!r){ showToast('Could not find ' + id); return; }
     var body = $('#modalBody');
-    var photoHtml = r.photoData ? '<img class="modal-photo" src="' + r.photoData + '" alt="" />' : '';
+    var photoHtml = r.photoUrl ? '<img class="modal-photo" src="' + r.photoUrl + '" alt="" />' : '';
     body.innerHTML =
       '<button class="modal-close" id="closeModalBtn" aria-label="Close">&times;</button>' +
       (justAdded ? '<p class="hint" style="color:var(--ok); margin:0 0 8px;">Added to inventory.</p>' : '') +
@@ -973,6 +960,7 @@
       if (!confirm('Delete ' + r.productId + '? This cannot be undone.')) return;
       try{
         await db.collection('sarees').doc(r.productId).delete();
+        if (r.photoPath){ storage.ref(r.photoPath).delete().catch(function(){}); }
         showToast('Deleted ' + r.productId);
         closeModal();
       }catch(err){ showToast('Could not delete (' + (err && err.code) + ')'); }
