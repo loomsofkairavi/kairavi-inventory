@@ -260,13 +260,30 @@
     return {name: parts[0], code: parts[1]};
   }
 
+  // When a saree already carries its own code (a return, a supplier tag),
+  // that scanned/typed value is used as the product ID as-is — the usual
+  // LOK-COLOUR-TYPE-COST generation is skipped for this piece — and a
+  // matching QR tag is generated for whatever code it is.
+  function scannedCodeValue(){
+    return $('#f-scanned-code').value.trim();
+  }
+
   async function updatePreview(){
+    var scanned = scannedCodeValue();
+    var note = $('#previewNote');
+    if (scanned){
+      $('#previewPid').textContent = scanned;
+      await renderQrInto($('#previewQrBox'), scanned, 108);
+      note.textContent = 'Using that code as-is for this piece — a matching QR tag will be generated for it.';
+      return;
+    }
     var color = $('#f-color').value;
     var cost = $('#f-cost').value;
     var t = currentTypeSelection();
     var base = baseProductId(color, t.code, cost);
     $('#previewPid').textContent = base;
     await renderQrInto($('#previewQrBox'), base, 108);
+    note.textContent = 'Fill in colour, type and cost to see the code and tag. Duplicate combinations get a ‒02, ‒03 suffix automatically.';
   }
 
   $('#f-type').addEventListener('change', function(){
@@ -278,7 +295,57 @@
     $('#f-cost').addEventListener(evt, updatePreview);
     $('#f-type-name').addEventListener(evt, updatePreview);
     $('#f-type-code').addEventListener(evt, updatePreview);
+    $('#f-scanned-code').addEventListener(evt, updatePreview);
   });
+
+  // ---------- barcode scan (existing code, for returns/supplier tags) ----------
+  var barcodeScanInstance = null;
+  function startBarcodeScan(){
+    if (typeof Html5Qrcode === 'undefined'){ showToast('Camera scanning is unavailable here — type the code instead.'); return; }
+    stopScanner(); // only one camera stream at a time
+    $('#startBarcodeScanBtn').hidden = true;
+    $('#stopBarcodeScanBtn').hidden = false;
+    $('#barcode-reader').hidden = false;
+    var formats = (typeof Html5QrcodeSupportedFormats !== 'undefined') ? [
+      Html5QrcodeSupportedFormats.QR_CODE,
+      Html5QrcodeSupportedFormats.EAN_13,
+      Html5QrcodeSupportedFormats.EAN_8,
+      Html5QrcodeSupportedFormats.UPC_A,
+      Html5QrcodeSupportedFormats.UPC_E,
+      Html5QrcodeSupportedFormats.CODE_128,
+      Html5QrcodeSupportedFormats.CODE_39,
+      Html5QrcodeSupportedFormats.CODE_93,
+      Html5QrcodeSupportedFormats.CODABAR,
+      Html5QrcodeSupportedFormats.ITF
+    ] : undefined;
+    barcodeScanInstance = new Html5Qrcode('barcode-reader', formats ? { formatsToSupport: formats, verbose: false } : undefined);
+    barcodeScanInstance.start(
+      {facingMode: 'environment'},
+      {fps: 10, qrbox: 220},
+      function(decoded){
+        $('#f-scanned-code').value = decoded.trim();
+        updatePreview();
+        stopBarcodeScan();
+        showToast('Scanned: ' + decoded.trim());
+      },
+      function(){ /* per-frame no-decode, ignore */ }
+    ).catch(function(){
+      showToast('Could not start camera — check permissions, or type the code instead.');
+      $('#startBarcodeScanBtn').hidden = false;
+      $('#stopBarcodeScanBtn').hidden = true;
+      $('#barcode-reader').hidden = true;
+    });
+  }
+  function stopBarcodeScan(){
+    if (barcodeScanInstance){
+      barcodeScanInstance.stop().then(function(){ barcodeScanInstance.clear(); }).catch(function(){});
+    }
+    $('#startBarcodeScanBtn').hidden = false;
+    $('#stopBarcodeScanBtn').hidden = true;
+    $('#barcode-reader').hidden = true;
+  }
+  $('#startBarcodeScanBtn').addEventListener('click', startBarcodeScan);
+  $('#stopBarcodeScanBtn').addEventListener('click', stopBarcodeScan);
 
   $('#f-photo').addEventListener('change', function(e){
     var file = e.target.files && e.target.files[0];
@@ -322,11 +389,31 @@
     var t = currentTypeSelection();
     if (!color || !cost){ showToast('Add a colour and landing cost first.'); return; }
 
+    var scannedCode = scannedCodeValue();
+
     var btn = $('#submitBtn');
     btn.disabled = true; btn.textContent = 'Saving…';
     try{
-      var base = baseProductId(color, t.code, cost);
-      var productId = await allocateProductId(base);
+      var productId;
+      if (scannedCode){
+        var existingDoc;
+        try{
+          existingDoc = await db.collection('sarees').doc(scannedCode).get();
+        }catch(err){
+          showToast('Could not verify that code — check your connection and try again.');
+          btn.disabled = false; btn.textContent = 'Add to inventory';
+          return;
+        }
+        if (existingDoc.exists){
+          showToast('A saree with code ' + scannedCode + ' is already in the catalog.');
+          btn.disabled = false; btn.textContent = 'Add to inventory';
+          return;
+        }
+        productId = scannedCode;
+      } else {
+        var base = baseProductId(color, t.code, cost);
+        productId = await allocateProductId(base);
+      }
 
       var photoUrl = null, photoPath = null;
       if (currentPhotoFile){
@@ -362,6 +449,7 @@
       currentPhotoFile = null;
       $('#photoThumb').src = '';
       $('#otherTypeRow').hidden = true;
+      stopBarcodeScan();
       updatePreview();
       openDetail(productId, true);
     }catch(err){
@@ -506,6 +594,7 @@
   // ---------- scan ----------
   $('#startScanBtn').addEventListener('click', function(){
     if (typeof Html5Qrcode === 'undefined'){ showToast('Camera scanning is unavailable here — type the ID instead.'); return; }
+    stopBarcodeScan(); // only one camera stream at a time
     $('#startScanBtn').hidden = true;
     $('#stopScanBtn').hidden = false;
     html5QrInstance = new Html5Qrcode('qr-reader');
@@ -582,18 +671,80 @@
     return '<div class="stat"><div class="label">' + label + '</div><div class="value' + (accent ? ' accent' : '') + '">' + value + '</div></div>';
   }
 
-  // ---------- csv export ----------
-  $('#exportCsvBtn').addEventListener('click', function(){
-    var cols = ['productId', 'color', 'typeName', 'typeCode', 'landingCost', 'status', 'soldPrice', 'soldTo', 'notes', 'addedBy', 'soldBy'];
-    var lines = [cols.join(',')];
-    sarees.forEach(function(r){
-      lines.push(cols.map(function(c){
-        var v = r[c] == null ? '' : String(r[c]);
-        if (v.indexOf(',') !== -1 || v.indexOf('"') !== -1){ v = '"' + v.replace(/"/g, '""') + '"'; }
-        return v;
-      }).join(','));
+  // ---------- pdf catalog export ----------
+  // Exports whatever is currently on screen — respects the active status
+  // chip (All / Available / Sold) and the search box — so picking
+  // "Available" first gives a clean available-sarees catalog PDF.
+  function statusChipLabel(v){
+    return v === 'available' ? 'Available' : v === 'sold' ? 'Sold' : 'Full';
+  }
+
+  $('#exportPdfBtn').addEventListener('click', function(){
+    if (typeof window.jspdf === 'undefined' || typeof window.jspdf.jsPDF === 'undefined'){
+      showToast('PDF export is unavailable right now — try reloading the page.');
+      return;
+    }
+    var list = sarees.filter(matchesFilters).sort(function(a, b){ return (b.createdAt || 0) - (a.createdAt || 0); });
+    if (!list.length){ showToast('Nothing to export for this view.'); return; }
+
+    var doc = new window.jspdf.jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+    var pageWidth = doc.internal.pageSize.getWidth();
+
+    doc.setFont('times', 'italic');
+    doc.setFontSize(20);
+    doc.setTextColor(124, 31, 43); // brand maroon
+    doc.text('Looms of Kairavi', pageWidth / 2, 46, { align: 'center' });
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(12);
+    doc.setTextColor(74, 58, 44);
+    doc.text(statusChipLabel(statusFilterVal) + ' Saree Catalog', pageWidth / 2, 64, { align: 'center' });
+
+    doc.setFontSize(9);
+    doc.setTextColor(138, 122, 104);
+    var meta = 'Generated ' + new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) +
+      '  ·  ' + list.length + ' piece' + (list.length === 1 ? '' : 's');
+    doc.text(meta, pageWidth / 2, 80, { align: 'center' });
+
+    var showSold = list.some(function(r){ return r.status === 'sold'; });
+    var head = ['Product ID', 'Colour', 'Weave', 'Cost'];
+    if (showSold) head = head.concat(['Status', 'Sold price', 'Sold to']);
+    head.push('Notes');
+
+    var body = list.map(function(r){
+      var row = [r.productId, r.color || '', r.typeName || '', '$' + Math.round(r.landingCost || 0)];
+      if (showSold){
+        row = row.concat([
+          r.status === 'sold' ? 'Sold' : 'Available',
+          r.status === 'sold' ? '$' + Math.round(r.soldPrice || 0) : '',
+          r.status === 'sold' ? (r.soldTo || '') : ''
+        ]);
+      }
+      row.push(r.notes || '');
+      return row;
     });
-    downloadBlob('kairavi-inventory.csv', new Blob([lines.join('\n')], {type: 'text/csv'}));
+
+    doc.autoTable({
+      head: [head],
+      body: body,
+      startY: 96,
+      styles: { font: 'helvetica', fontSize: 9, textColor: [42, 25, 18], cellPadding: 5, overflow: 'linebreak' },
+      headStyles: { fillColor: [124, 31, 43], textColor: [255, 250, 242], fontStyle: 'bold' },
+      alternateRowStyles: { fillColor: [255, 250, 242] },
+      columnStyles: { 0: { font: 'courier', fontStyle: 'bold', fontSize: 8 } },
+      margin: { left: 32, right: 32, bottom: 34 },
+      didDrawPage: function(){
+        var h = doc.internal.pageSize.getHeight();
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(8);
+        doc.setTextColor(160, 145, 125);
+        doc.text('@loomsofkairavi', pageWidth / 2, h - 20, { align: 'center' });
+      }
+    });
+
+    var fname = 'kairavi-catalog-' + statusFilterVal + '-' + new Date().toISOString().slice(0, 10) + '.pdf';
+    doc.save(fname);
+    showToast('Downloaded ' + fname);
   });
 
   // ---------- tabs ----------
@@ -604,6 +755,7 @@
     btn.classList.add('active');
     $all('section[data-view]').forEach(function(s){ s.hidden = s.dataset.view !== btn.dataset.tab; });
     if (btn.dataset.tab !== 'scan') stopScanner();
+    if (btn.dataset.tab !== 'add') stopBarcodeScan();
   });
 
   updatePreview();
