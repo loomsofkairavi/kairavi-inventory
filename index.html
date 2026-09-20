@@ -18,6 +18,10 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
 
+<!-- PDF catalog export -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/4.2.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/5.0.8/jspdf.plugin.autotable.min.js"></script>
+
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -80,7 +84,7 @@
             <div class="chip" data-status="available">Available</div>
             <div class="chip" data-status="sold">Sold</div>
           </div>
-          <button class="btn ghost" id="exportCsvBtn" type="button">Export CSV</button>
+          <button class="btn ghost" id="exportPdfBtn" type="button">Export PDF</button>
         </div>
       </div>
       <div class="grid" id="catalogGrid"></div>
@@ -91,9 +95,18 @@
     <section data-view="add" hidden>
       <div class="panel">
         <h2>Log a new saree</h2>
-        <p class="hint">The product ID is generated automatically from the colour, weave type and landing cost — LOK&#8209;COLOUR&#8209;TYPE&#8209;COST.</p>
+        <p class="hint">The product ID is generated automatically from the colour, weave type and landing cost — LOK&#8209;COLOUR&#8209;TYPE&#8209;COST — unless you scan or type an existing code below.</p>
         <form class="addform" id="addForm">
           <div>
+            <div class="field">
+              <label for="f-scanned-code">Already has a code? (returns, supplier tags, etc.)</label>
+              <div class="btn-row" style="margin-bottom:8px;">
+                <button type="button" class="btn secondary" id="startBarcodeScanBtn">Scan barcode</button>
+                <button type="button" class="btn ghost" id="stopBarcodeScanBtn" hidden>Stop scanning</button>
+              </div>
+              <div id="barcode-reader" hidden></div>
+              <input type="text" id="f-scanned-code" placeholder="Scan above, or type the code here" />
+            </div>
             <div class="field">
               <label for="f-color">Colour</label>
               <input type="text" id="f-color" placeholder="e.g. Green" required />
@@ -145,7 +158,7 @@
               <div class="meta">Product ID preview</div>
               <div class="qr-box" id="previewQrBox"></div>
               <div class="pid" id="previewPid">LOK&#8209;&#8209;&#8209;</div>
-              <div class="note">Fill in colour, type and cost to see the code and tag. Duplicate combinations get a &minus;02, &minus;03 suffix automatically.</div>
+              <div class="note" id="previewNote">Fill in colour, type and cost to see the code and tag. Duplicate combinations get a &minus;02, &minus;03 suffix automatically.</div>
             </div>
           </div>
         </form>

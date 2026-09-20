@@ -6,7 +6,7 @@ Live app: https://loomsofkairavi.github.io/kairavi-inventory/ (custom domain htt
 
 ## What it does
 
-Add a saree (colour, weave type, landing cost, photo, notes) and get an auto-generated product ID + QR tag; scan a tag to pull up its record; mark pieces sold or back to available; browse/search/filter the catalog; print or download QR tags; a dashboard of stock by weave type; CSV export for backup.
+Add a saree (colour, weave type, landing cost, photo, notes) and get an auto-generated product ID + QR tag; scan a tag to pull up its record; mark pieces sold or back to available; browse/search/filter the catalog; print or download QR tags; a dashboard of stock by weave type; export the current view (all / available / sold) as a branded PDF catalog.
 
 ## How it's built
 

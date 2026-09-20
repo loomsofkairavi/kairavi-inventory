@@ -220,7 +220,7 @@
   .empty{color:var(--ink-soft); font-size:0.9rem; padding:24px 0; text-align:center;}
 
   /* scan */
-  #qr-reader{width:100%; max-width:360px; border-radius:var(--radius); overflow:hidden; border:1px solid var(--line);}
+  #qr-reader, #barcode-reader{width:100%; max-width:360px; border-radius:var(--radius); overflow:hidden; border:1px solid var(--line);}
   .scan-result{border:1px solid var(--line); border-radius:var(--radius); padding:14px; background:var(--surface-2); display:none;}
   .scan-result.show{display:block;}
 
