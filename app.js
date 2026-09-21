@@ -34,7 +34,6 @@
   var escapeHtml = KairaviLogic.escapeHtml;
   var baseProductId = KairaviLogic.baseProductId;
   var labelForEmail = KairaviLogic.labelForEmail;
-  var statusChipLabel = KairaviLogic.statusChipLabel;
 
   function showToast(msg){
     var t = $('#toast');
@@ -643,76 +642,159 @@
     return '<div class="stat"><div class="label">' + label + '</div><div class="value' + (accent ? ' accent' : '') + '">' + value + '</div></div>';
   }
 
-  // ---------- pdf catalog export ----------
-  // Exports whatever is currently on screen — respects the active status
-  // chip (All / Available / Sold) and the search box — so picking
-  // "Available" first gives a clean available-sarees catalog PDF.
-  $('#exportPdfBtn').addEventListener('click', function(){
+  // ---------- pdf photo catalog export (lookbook style) ----------
+  // A customer-facing lookbook, one full page per saree — large photo,
+  // gold frame, brand watermark, title, description (from notes), and a
+  // "LOOMS OF KAIRAVI | <WEAVE> COLLECTION | N" footer. Always available
+  // pieces only, regardless of the on-screen status chip (sold pieces
+  // don't belong in something you'd hand to a customer) — the search box
+  // still narrows which available pieces are included.
+  var PDF_PAGE_MARGIN = 34, PDF_CONTENT_INSET = 20, PDF_PHOTO_H = 470, PDF_IMAGE_DPI = 150;
+
+  // Fetches a photo and re-encodes it (via canvas) at print-appropriate
+  // resolution as a JPEG data URL — keeps the PDF small even though the
+  // originals are stored full-resolution. Resolves null on any failure
+  // (CORS, network, bad image) so the page can fall back to a placeholder.
+  function fetchPhotoForPdf(url, boxWpt, boxHpt){
+    return fetch(url, { mode: 'cors' }).then(function(resp){
+      if (!resp.ok) throw new Error('bad status');
+      return resp.blob();
+    }).then(function(blob){
+      return new Promise(function(resolve, reject){
+        var objUrl = URL.createObjectURL(blob);
+        var img = new Image();
+        img.onload = function(){
+          var pxPerPt = PDF_IMAGE_DPI / 72;
+          var scale = Math.min(1, (boxWpt * pxPerPt) / img.naturalWidth, (boxHpt * pxPerPt) / img.naturalHeight);
+          var w = Math.max(1, Math.round(img.naturalWidth * scale));
+          var h = Math.max(1, Math.round(img.naturalHeight * scale));
+          var canvas = document.createElement('canvas');
+          canvas.width = w; canvas.height = h;
+          canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+          URL.revokeObjectURL(objUrl);
+          resolve({ dataUrl: canvas.toDataURL('image/jpeg', 0.85), width: img.naturalWidth, height: img.naturalHeight });
+        };
+        img.onerror = function(){ URL.revokeObjectURL(objUrl); reject(new Error('bad image')); };
+        img.src = objUrl;
+      });
+    }).catch(function(){ return null; });
+  }
+
+  function containFit(iw, ih, bw, bh){
+    var scale = Math.min(bw / iw, bh / ih);
+    return { w: iw * scale, h: ih * scale };
+  }
+
+  function sareeTitle(record){
+    var parts = [];
+    if (record.typeName) parts.push(record.typeName);
+    if (record.color) parts.push(record.color);
+    return (parts.join(' ') + ' Saree').trim();
+  }
+
+  function drawLookbookPage(doc, record, photo, pageIndex){
+    var pageWidth = doc.internal.pageSize.getWidth();
+    var pageHeight = doc.internal.pageSize.getHeight();
+
+    doc.setFillColor(250, 246, 238); // --paper
+    doc.rect(0, 0, pageWidth, pageHeight, 'F');
+
+    doc.setDrawColor(169, 122, 36); // --gold
+    doc.setLineWidth(1.2);
+    doc.rect(PDF_PAGE_MARGIN, PDF_PAGE_MARGIN, pageWidth - PDF_PAGE_MARGIN * 2, pageHeight - PDF_PAGE_MARGIN * 2, 'S');
+
+    var contentX = PDF_PAGE_MARGIN + PDF_CONTENT_INSET;
+    var contentW = pageWidth - contentX * 2;
+    var photoY = PDF_PAGE_MARGIN + PDF_CONTENT_INSET;
+
+    doc.setFillColor(255, 255, 255);
+    doc.rect(contentX, photoY, contentW, PDF_PHOTO_H, 'F');
+    doc.setDrawColor(230, 220, 205);
+    doc.setLineWidth(0.75);
+    doc.rect(contentX, photoY, contentW, PDF_PHOTO_H, 'S');
+
+    if (photo){
+      var pad = 8;
+      var fit = containFit(photo.width, photo.height, contentW - pad * 2, PDF_PHOTO_H - pad * 2);
+      try{
+        doc.addImage(photo.dataUrl, 'JPEG', contentX + (contentW - fit.w) / 2, photoY + (PDF_PHOTO_H - fit.h) / 2, fit.w, fit.h);
+      }catch(e){ photo = null; }
+    }
+    if (photo){
+      doc.setGState(new doc.GState({ opacity: 0.4 }));
+      doc.setFont('times', 'italic');
+      doc.setFontSize(26);
+      doc.setTextColor(255, 255, 255);
+      doc.text('Looms of Kairavi', pageWidth / 2, photoY + PDF_PHOTO_H / 2, { align: 'center', angle: 15 });
+      doc.setGState(new doc.GState({ opacity: 1 }));
+    } else {
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(11);
+      doc.setTextColor(160, 145, 125);
+      doc.text(record.color || 'No photo', pageWidth / 2, photoY + PDF_PHOTO_H / 2, { align: 'center' });
+    }
+
+    var textY = photoY + PDF_PHOTO_H + 36;
+    doc.setFont('times', 'bold');
+    doc.setFontSize(18);
+    doc.setTextColor(124, 31, 43); // --maroon
+    doc.text(sareeTitle(record), pageWidth / 2, textY, { align: 'center' });
+
+    if (record.notes){
+      textY += 22;
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(10.5);
+      doc.setTextColor(74, 58, 44);
+      doc.splitTextToSize(record.notes, contentW - 40).forEach(function(line){
+        doc.text(line, pageWidth / 2, textY, { align: 'center' });
+        textY += 15;
+      });
+    }
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8.5);
+    doc.setTextColor(124, 31, 43);
+    var footer = 'LOOMS OF KAIRAVI  |  ' + (record.typeName || 'SAREE').toUpperCase() + ' COLLECTION  |  ' + pageIndex;
+    doc.text(footer, pageWidth / 2, pageHeight - PDF_PAGE_MARGIN - PDF_CONTENT_INSET + 4, { align: 'center' });
+  }
+
+  $('#exportPdfBtn').addEventListener('click', async function(){
     if (typeof window.jspdf === 'undefined' || typeof window.jspdf.jsPDF === 'undefined'){
       showToast('PDF export is unavailable right now — try reloading the page.');
       return;
     }
-    var list = sarees.filter(matchesFilters).sort(function(a, b){ return (b.createdAt || 0) - (a.createdAt || 0); });
-    if (!list.length){ showToast('Nothing to export for this view.'); return; }
+    var list = sarees.filter(function(r){ return KairaviLogic.matchesFilters(r, 'available', searchVal); })
+      .sort(function(a, b){ return (b.createdAt || 0) - (a.createdAt || 0); });
+    if (!list.length){ showToast('No available pieces to export' + (searchVal ? ' for this search.' : '.')); return; }
 
-    var doc = new window.jspdf.jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
-    var pageWidth = doc.internal.pageSize.getWidth();
+    var btn = this;
+    var origLabel = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Building PDF…';
+    showToast('Fetching photos for ' + list.length + ' piece' + (list.length === 1 ? '' : 's') + '…');
 
-    doc.setFont('times', 'italic');
-    doc.setFontSize(20);
-    doc.setTextColor(124, 31, 43); // brand maroon
-    doc.text('Looms of Kairavi', pageWidth / 2, 46, { align: 'center' });
+    try{
+      var doc = new window.jspdf.jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+      var contentW = doc.internal.pageSize.getWidth() - (PDF_PAGE_MARGIN + PDF_CONTENT_INSET) * 2;
 
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(12);
-    doc.setTextColor(74, 58, 44);
-    doc.text(statusChipLabel(statusFilterVal) + ' Saree Catalog', pageWidth / 2, 64, { align: 'center' });
+      var photos = await Promise.all(list.map(function(r){
+        return r.photoUrl ? fetchPhotoForPdf(r.photoUrl, contentW - 16, PDF_PHOTO_H - 16) : Promise.resolve(null);
+      }));
 
-    doc.setFontSize(9);
-    doc.setTextColor(138, 122, 104);
-    var meta = 'Generated ' + new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) +
-      '  ·  ' + list.length + ' piece' + (list.length === 1 ? '' : 's');
-    doc.text(meta, pageWidth / 2, 80, { align: 'center' });
+      list.forEach(function(r, i){
+        if (i > 0) doc.addPage();
+        drawLookbookPage(doc, r, photos[i], i + 1);
+      });
 
-    var showSold = list.some(function(r){ return r.status === 'sold'; });
-    var head = ['Product ID', 'Colour', 'Weave', 'Cost'];
-    if (showSold) head = head.concat(['Status', 'Sold price', 'Sold to']);
-    head.push('Notes');
-
-    var body = list.map(function(r){
-      var row = [r.productId, r.color || '', r.typeName || '', '$' + Math.round(r.landingCost || 0)];
-      if (showSold){
-        row = row.concat([
-          r.status === 'sold' ? 'Sold' : 'Available',
-          r.status === 'sold' ? '$' + Math.round(r.soldPrice || 0) : '',
-          r.status === 'sold' ? (r.soldTo || '') : ''
-        ]);
-      }
-      row.push(r.notes || '');
-      return row;
-    });
-
-    doc.autoTable({
-      head: [head],
-      body: body,
-      startY: 96,
-      styles: { font: 'helvetica', fontSize: 9, textColor: [42, 25, 18], cellPadding: 5, overflow: 'linebreak' },
-      headStyles: { fillColor: [124, 31, 43], textColor: [255, 250, 242], fontStyle: 'bold' },
-      alternateRowStyles: { fillColor: [255, 250, 242] },
-      columnStyles: { 0: { font: 'courier', fontStyle: 'bold', fontSize: 8 } },
-      margin: { left: 32, right: 32, bottom: 34 },
-      didDrawPage: function(){
-        var h = doc.internal.pageSize.getHeight();
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(8);
-        doc.setTextColor(160, 145, 125);
-        doc.text('@loomsofkairavi', pageWidth / 2, h - 20, { align: 'center' });
-      }
-    });
-
-    var fname = 'kairavi-catalog-' + statusFilterVal + '-' + new Date().toISOString().slice(0, 10) + '.pdf';
-    doc.save(fname);
-    showToast('Downloaded ' + fname);
+      var fname = 'kairavi-lookbook-' + new Date().toISOString().slice(0, 10) + '.pdf';
+      doc.save(fname);
+      showToast('Downloaded ' + fname);
+    }catch(err){
+      showToast('Could not build the PDF — try again.');
+    }finally{
+      btn.disabled = false;
+      btn.textContent = origLabel;
+    }
   });
 
   // ---------- tabs ----------

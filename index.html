@@ -18,9 +18,8 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
 
-<!-- PDF catalog export -->
+<!-- PDF photo catalog export -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/4.2.1/jspdf.umd.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/5.0.8/jspdf.plugin.autotable.min.js"></script>
 
 <link rel="stylesheet" href="styles.css">
 </head>
@@ -84,7 +83,7 @@
             <div class="chip" data-status="available">Available</div>
             <div class="chip" data-status="sold">Sold</div>
           </div>
-          <button class="btn ghost" id="exportPdfBtn" type="button">Export PDF</button>
+          <button class="btn ghost" id="exportPdfBtn" type="button" title="Builds a one-page-per-saree photo catalog of available pieces only, ignoring the status chip above; the search box still narrows it.">Export Photo Catalog</button>
         </div>
       </div>
       <div class="grid" id="catalogGrid"></div>
