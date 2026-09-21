@@ -29,10 +29,16 @@ Add a saree (colour, weave type, landing cost, photo, notes) and get an auto-gen
 
 Edit `index.html`, `styles.css`, or `app.js` on `main` (directly here on GitHub, or push from a clone) — GitHub Pages rebuilds automatically within about a minute. No separate deploy step.
 
+## Testing
+
+`logic.js` holds the pure, DOM-free and Firebase-free logic (product ID generation, catalog filtering, dashboard math) shared by `app.js`. Open `test.html` directly in a browser to run its unit tests — no build step, no npm, no server needed. A green "N passed, 0 failed" summary at the bottom means it's good. Firebase-dependent behavior (auth, live Firestore/Storage) isn't covered here since this app has no test project — it's exercised by hand against the real `kairavi-inventory` project.
+
 ## Files
 
 - `index.html` — markup and screen structure.
 - `styles.css` — base styles and variables.
+- `logic.js` — pure helper functions (product id, filtering, dashboard math) shared by `app.js` and `test.html`.
 - `app.js` — Firebase wiring, auth, catalog, scanning, dashboard, and PDF export logic.
+- `test.html` — unit tests for `logic.js`; open in a browser to run.
 - `CNAME` — custom domain config for GitHub Pages (auto-managed by the Pages custom domain setting).
 

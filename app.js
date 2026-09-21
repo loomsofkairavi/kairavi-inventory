@@ -29,6 +29,13 @@
   function $(sel, root){ return (root||document).querySelector(sel); }
   function $all(sel, root){ return Array.prototype.slice.call((root||document).querySelectorAll(sel)); }
 
+  // Pure helpers (product id, filtering, dashboard math) live in logic.js
+  // so they can be unit-tested without the DOM or Firebase — see test.html.
+  var escapeHtml = KairaviLogic.escapeHtml;
+  var baseProductId = KairaviLogic.baseProductId;
+  var labelForEmail = KairaviLogic.labelForEmail;
+  var statusChipLabel = KairaviLogic.statusChipLabel;
+
   function showToast(msg){
     var t = $('#toast');
     t.textContent = msg;
@@ -37,25 +44,7 @@
     t._timer = setTimeout(function(){ t.classList.remove('show'); }, 3200);
   }
 
-  function escapeHtml(s){
-    return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){
-      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
-    });
-  }
-
   // ---------- product id ----------
-  function colorCode(color){
-    return String(color || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
-  }
-  function costCode(cost){
-    cost = Math.max(0, Math.round(Number(cost) || 0));
-    var hundreds = Math.floor(cost / 100);
-    var rem = cost % 100;
-    return hundreds + 'C' + String(rem).padStart(2, '0');
-  }
-  function baseProductId(color, typeCode, cost){
-    return 'LOK-' + colorCode(color) + '-' + (typeCode || '?').toUpperCase() + '-' + costCode(cost);
-  }
   async function allocateProductId(base){
     var n = 1;
     while (n <= 99){
@@ -69,11 +58,6 @@
     return base + '-' + Date.now().toString(36).toUpperCase();
   }
 
-  function labelForEmail(email){
-    if (!email) return '';
-    var name = email.split('@')[0];
-    return name.charAt(0).toUpperCase() + name.slice(1);
-  }
   function currentUser(){
     return auth && auth.currentUser ? labelForEmail(auth.currentUser.email) : '';
   }
@@ -477,10 +461,7 @@
   });
 
   function matchesFilters(r){
-    if (statusFilterVal !== 'all' && r.status !== statusFilterVal) return false;
-    if (!searchVal) return true;
-    var hay = [r.productId, r.color, r.typeName].join(' ').toLowerCase();
-    return hay.indexOf(searchVal) !== -1;
+    return KairaviLogic.matchesFilters(r, statusFilterVal, searchVal);
   }
 
   function renderCatalog(){
@@ -639,27 +620,18 @@
 
   // ---------- dashboard ----------
   function renderDashboard(){
-    var total = sarees.length;
-    var available = sarees.filter(function(r){ return r.status !== 'sold'; });
-    var sold = sarees.filter(function(r){ return r.status === 'sold'; });
-    var availValue = available.reduce(function(s, r){ return s + (Number(r.landingCost) || 0); }, 0);
-    var soldRevenue = sold.reduce(function(s, r){ return s + (Number(r.soldPrice) || 0); }, 0);
-    var soldCost = sold.reduce(function(s, r){ return s + (Number(r.landingCost) || 0); }, 0);
+    var stats = KairaviLogic.computeDashboardStats(sarees);
 
     $('#statTiles').innerHTML = [
-      tile('Total pieces', total),
-      tile('Available', available.length),
-      tile('Sold', sold.length),
-      tile('Available inventory value', '$' + availValue.toLocaleString(), true),
-      tile('Sold revenue', '$' + soldRevenue.toLocaleString(), true),
-      tile('Gross profit on sold', '$' + (soldRevenue - soldCost).toLocaleString(), true)
+      tile('Total pieces', stats.total),
+      tile('Available', stats.availableCount),
+      tile('Sold', stats.soldCount),
+      tile('Available inventory value', '$' + stats.availValue.toLocaleString(), true),
+      tile('Sold revenue', '$' + stats.soldRevenue.toLocaleString(), true),
+      tile('Gross profit on sold', '$' + stats.grossProfit.toLocaleString(), true)
     ].join('');
 
-    var counts = {};
-    sarees.forEach(function(r){
-      var key = r.typeName || 'Other';
-      counts[key] = (counts[key] || 0) + 1;
-    });
+    var counts = KairaviLogic.computeTypeCounts(sarees);
     var maxCount = Math.max(1, Object.values(counts).reduce(function(a, b){ return Math.max(a, b); }, 0));
     var bars = Object.keys(counts).sort(function(a, b){ return counts[b] - counts[a]; }).map(function(k){
       var pct = Math.round((counts[k] / maxCount) * 100);
@@ -675,10 +647,6 @@
   // Exports whatever is currently on screen — respects the active status
   // chip (All / Available / Sold) and the search box — so picking
   // "Available" first gives a clean available-sarees catalog PDF.
-  function statusChipLabel(v){
-    return v === 'available' ? 'Available' : v === 'sold' ? 'Sold' : 'Full';
-  }
-
   $('#exportPdfBtn').addEventListener('click', function(){
     if (typeof window.jspdf === 'undefined' || typeof window.jspdf.jsPDF === 'undefined'){
       showToast('PDF export is unavailable right now — try reloading the page.');

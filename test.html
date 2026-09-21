@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Kairavi Inventory — logic tests</title>
+<style>
+  body { font-family: -apple-system, Segoe UI, sans-serif; max-width: 720px; margin: 40px auto; padding: 0 16px; }
+  .pass { color: #1a7f37; }
+  .fail { color: #c1121f; font-weight: 600; }
+  #summary { font-size: 1.1rem; margin-top: 16px; padding-top: 12px; border-top: 1px solid #ddd; }
+  li { margin: 4px 0; font-family: "Courier New", monospace; font-size: 0.9rem; }
+</style>
+</head>
+<body>
+<h1>Kairavi Inventory — logic tests</h1>
+<p>Exercises the pure functions in <code>logic.js</code> (product ID generation, catalog filtering, dashboard math) with no DOM/Firebase involved. Open this file directly in a browser to run.</p>
+<ul id="results"></ul>
+<div id="summary"></div>
+
+<script src="logic.js"></script>
+<script>
+(function(){
+  "use strict";
+  var L = window.KairaviLogic;
+  var results = [];
+  var pass = 0, fail = 0;
+
+  function test(name, fn){
+    try{
+      fn();
+      results.push({name: name, ok: true});
+      pass++;
+    }catch(e){
+      results.push({name: name, ok: false, error: e.message});
+      fail++;
+    }
+  }
+
+  function assertEqual(actual, expected, label){
+    var a = JSON.stringify(actual), e = JSON.stringify(expected);
+    if (a !== e) throw new Error((label ? label + ': ' : '') + 'expected ' + e + ' but got ' + a);
+  }
+
+  // ---------- escapeHtml ----------
+  test('escapeHtml escapes all five special characters', function(){
+    assertEqual(L.escapeHtml('<a href="x">&\'</a>'), '&lt;a href=&quot;x&quot;&gt;&amp;&#39;&lt;/a&gt;');
+  });
+  test('escapeHtml treats null/undefined as empty string', function(){
+    assertEqual(L.escapeHtml(null), '');
+    assertEqual(L.escapeHtml(undefined), '');
+  });
+
+  // ---------- colorCode / costCode / baseProductId ----------
+  test('baseProductId uppercases and strips non-alphanumerics from color', function(){
+    assertEqual(L.baseProductId('deep red!', 'S', 450), 'LOK-DEEPRED-S-4C50');
+  });
+  test('baseProductId cost code splits hundreds and remainder, zero-padded', function(){
+    assertEqual(L.baseProductId('Blue', 'K', 100), 'LOK-BLUE-K-1C00');
+    assertEqual(L.baseProductId('Blue', 'K', 99), 'LOK-BLUE-K-0C99');
+    assertEqual(L.baseProductId('Blue', 'K', 5), 'LOK-BLUE-K-0C05');
+  });
+  test('baseProductId clamps negative/NaN cost to 0', function(){
+    assertEqual(L.baseProductId('Blue', 'K', -50), 'LOK-BLUE-K-0C00');
+    assertEqual(L.baseProductId('Blue', 'K', NaN), 'LOK-BLUE-K-0C00');
+  });
+  test('baseProductId falls back to "?" for missing type code', function(){
+    assertEqual(L.baseProductId('Blue', '', 200), 'LOK-BLUE-?-2C00');
+  });
+
+  // ---------- labelForEmail ----------
+  test('labelForEmail capitalizes the local part before @', function(){
+    assertEqual(L.labelForEmail('priya@loomsofkairavi.com'), 'Priya');
+  });
+  test('labelForEmail returns empty string for falsy input', function(){
+    assertEqual(L.labelForEmail(''), '');
+    assertEqual(L.labelForEmail(null), '');
+  });
+
+  // ---------- statusChipLabel ----------
+  test('statusChipLabel maps chip values to display labels', function(){
+    assertEqual(L.statusChipLabel('available'), 'Available');
+    assertEqual(L.statusChipLabel('sold'), 'Sold');
+    assertEqual(L.statusChipLabel('all'), 'Full');
+  });
+
+  // ---------- matchesFilters ----------
+  var sample = { productId: 'LOK-RED-S-4C50', color: 'Red', typeName: 'Silk', status: 'available' };
+  test('matchesFilters "all" status with no search matches everything', function(){
+    assertEqual(L.matchesFilters(sample, 'all', ''), true);
+  });
+  test('matchesFilters filters out non-matching status', function(){
+    assertEqual(L.matchesFilters(sample, 'sold', ''), false);
+  });
+  test('matchesFilters matching status passes', function(){
+    assertEqual(L.matchesFilters(sample, 'available', ''), true);
+  });
+  test('matchesFilters search matches product id, color, or type case-insensitively', function(){
+    assertEqual(L.matchesFilters(sample, 'all', 'lok-red'), true);
+    assertEqual(L.matchesFilters(sample, 'all', 'silk'), true);
+    assertEqual(L.matchesFilters(sample, 'all', 'zzz'), false);
+  });
+  test('matchesFilters combines status and search (both must pass)', function(){
+    assertEqual(L.matchesFilters(sample, 'sold', 'silk'), false);
+  });
+
+  // ---------- computeDashboardStats ----------
+  var sarees = [
+    { status: 'available', landingCost: 400 },
+    { status: 'available', landingCost: 600 },
+    { status: 'sold', landingCost: 300, soldPrice: 500 },
+    { status: 'sold', landingCost: 200, soldPrice: 350 }
+  ];
+  test('computeDashboardStats counts totals correctly', function(){
+    var s = L.computeDashboardStats(sarees);
+    assertEqual(s.total, 4, 'total');
+    assertEqual(s.availableCount, 2, 'availableCount');
+    assertEqual(s.soldCount, 2, 'soldCount');
+  });
+  test('computeDashboardStats sums available inventory value from unsold pieces only', function(){
+    var s = L.computeDashboardStats(sarees);
+    assertEqual(s.availValue, 1000, 'availValue');
+  });
+  test('computeDashboardStats sums sold revenue and computes gross profit', function(){
+    var s = L.computeDashboardStats(sarees);
+    assertEqual(s.soldRevenue, 850, 'soldRevenue');
+    assertEqual(s.soldCost, 500, 'soldCost');
+    assertEqual(s.grossProfit, 350, 'grossProfit');
+  });
+  test('computeDashboardStats treats missing/non-numeric costs as 0', function(){
+    var s = L.computeDashboardStats([{ status: 'available' }, { status: 'sold', soldPrice: 'oops' }]);
+    assertEqual(s.availValue, 0);
+    assertEqual(s.soldRevenue, 0);
+  });
+  test('computeDashboardStats handles an empty catalog', function(){
+    var s = L.computeDashboardStats([]);
+    assertEqual(s, { total: 0, availableCount: 0, soldCount: 0, availValue: 0, soldRevenue: 0, soldCost: 0, grossProfit: 0 });
+  });
+
+  // ---------- computeTypeCounts ----------
+  test('computeTypeCounts tallies by typeName, defaulting to "Other"', function(){
+    var counts = L.computeTypeCounts([
+      { typeName: 'Silk' }, { typeName: 'Silk' }, { typeName: 'Cotton' }, {}
+    ]);
+    assertEqual(counts, { Silk: 2, Cotton: 1, Other: 1 });
+  });
+
+  // ---------- render + report ----------
+  var list = document.getElementById('results');
+  results.forEach(function(r){
+    var li = document.createElement('li');
+    li.className = r.ok ? 'pass' : 'fail';
+    li.textContent = (r.ok ? '✓ ' : '✗ ') + r.name + (r.ok ? '' : ' — ' + r.error);
+    list.appendChild(li);
+  });
+  var summaryEl = document.getElementById('summary');
+  var summaryText = pass + ' passed, ' + fail + ' failed (of ' + results.length + ')';
+  summaryEl.textContent = summaryText;
+  summaryEl.className = fail === 0 ? 'pass' : 'fail';
+
+  // Machine-readable hook for headless runs (e.g. `chrome --headless --dump-dom`).
+  document.body.setAttribute('data-test-status', fail === 0 ? 'pass' : 'fail');
+  document.body.setAttribute('data-test-summary', summaryText);
+  document.title = (fail === 0 ? 'PASS' : 'FAIL') + ' — Kairavi Inventory logic tests';
+})();
+</script>
+</body>
+</html>
