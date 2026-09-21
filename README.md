@@ -10,27 +10,29 @@ Add a saree (colour, weave type, landing cost, photo, notes) and get an auto-gen
 
 ## How it's built
 
-- Single static file, `index.html` — plain HTML/CSS/JS, no build step, no framework.
+- Static frontend split across `index.html` (markup), `styles.css`, and `app.js` — plain HTML/CSS/JS, no build step, no framework.
 - **Firebase** (`kairavi-inventory` project) provides the backend:
   - **Firestore** for all data (one `sarees` collection).
   - **Authentication** (Email/Password) for login. There is no public sign-up screen anywhere in this app — accounts are provisioned directly in the Firebase console, and only two exist.
-  - No Firebase Storage — photos are resized/compressed client-side and stored as base64 data URLs directly in each Firestore document, so no billing plan is required for that piece.
-- The `firebaseConfig` values (apiKey, project id, etc.) visible in `index.html` are not secrets — this is normal for a Firebase web client. Access control is enforced entirely server-side by the Firestore security rules below, not by hiding this config.
+  - **Firebase Storage** for photos — uploaded at full resolution (no client-side resize/compression), capped at 20MB per file, stored under `saree-photos/`. Each Firestore record keeps the resulting download URL and storage path.
+- The `firebaseConfig` values (apiKey, project id, etc.) visible in `app.js` are not secrets — this is normal for a Firebase web client. Access control is enforced entirely server-side by the Firestore/Storage security rules below, not by hiding this config.
 
 ## Security model
 
 - Firestore rules (published): `allow read, write: if request.auth != null;` — any signed-in user can read/write, no one signed out can touch any data.
+- Storage rules should mirror this (`allow read, write: if request.auth != null;` on the `saree-photos/` path) so only signed-in users can upload or fetch photos.
 - Auth sign-in providers: **Email/Password only** — no Google/OAuth, no anonymous auth, no phone auth.
-- No client-side sign-up flow exists in `index.html` (no `createUserWithEmailAndPassword` call) — new accounts can only be created by an admin in the Firebase console.
+- No client-side sign-up flow exists in `app.js` (no `createUserWithEmailAndPassword` call) — new accounts can only be created by an admin in the Firebase console.
 - Exactly two user accounts exist in Firebase Authentication.
 
 ## Updating
 
-Edit `index.html` on `main` (directly here on GitHub, or push from a clone) — GitHub Pages rebuilds automatically within about a minute. No separate deploy step.
+Edit `index.html`, `styles.css`, or `app.js` on `main` (directly here on GitHub, or push from a clone) — GitHub Pages rebuilds automatically within about a minute. No separate deploy step.
 
 ## Files
 
-- `index.html` — the live app.
+- `index.html` — markup and screen structure.
+- `styles.css` — base styles and variables.
+- `app.js` — Firebase wiring, auth, catalog, scanning, dashboard, and PDF export logic.
 - `CNAME` — custom domain config for GitHub Pages (auto-managed by the Pages custom domain setting).
-- `index-old.html` — harmless leftover from an earlier upload; not referenced by anything live, safe to delete.
 
