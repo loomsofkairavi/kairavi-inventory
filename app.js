@@ -64,17 +64,34 @@
   // ---------- auth ----------
   function initAuth(){
     if (!CONFIGURED){
+      $('#bootLoading').hidden = true;
+      $('#authGate').hidden = false;
       $('#setupNote').hidden = false;
       $('#loginForm').hidden = true;
       $('#forgotBtn').hidden = true;
       return;
     }
-    firebase.initializeApp(firebaseConfig);
-    auth = firebase.auth();
-    db = firebase.firestore();
-    storage = firebase.storage();
+    try{
+      firebase.initializeApp(firebaseConfig);
+      auth = firebase.auth();
+      db = firebase.firestore();
+      storage = firebase.storage();
+    }catch(e){
+      // Firebase itself failed to load/init (e.g. CDN blocked) — fall back
+      // to the login screen instead of leaving the "Loading…" splash stuck
+      // forever with no way for the user to tell what's wrong.
+      $('#bootLoading').hidden = true;
+      $('#authGate').hidden = false;
+      showToast('Could not connect to Firebase — try reloading the page.');
+      return;
+    }
 
+    // Firebase resolves the persisted session asynchronously, so the very
+    // first onAuthStateChanged callback is what tells us whether to show
+    // the login screen or the app — until then #bootLoading stays up
+    // instead of defaulting to (and flashing) the login screen.
     auth.onAuthStateChanged(function(user){
+      $('#bootLoading').hidden = true;
       if (user){
         $('#authGate').hidden = true;
         $('#appRoot').hidden = false;
