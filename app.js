@@ -520,6 +520,11 @@
       photoHtml +
       '<div class="modal-pid">' + escapeHtml(r.productId) + '</div>' +
       '<span class="pill ' + (r.status === 'sold' ? 'sold' : 'available') + '" style="margin-top:6px;">' + (r.status === 'sold' ? 'Sold' : 'Available') + '</span>' +
+      '<div class="field" style="margin-top:12px;">' +
+        '<label for="modalPhotoInput">' + (r.photoUrl ? 'Replace photo' : 'Add photo') + '</label>' +
+        '<input type="file" id="modalPhotoInput" accept="image/*" capture="environment" />' +
+        '<p class="hint" id="modalPhotoStatus" style="margin:4px 0 0;"></p>' +
+      '</div>' +
       '<dl class="kv">' +
         '<dt>Colour</dt><dd>' + escapeHtml(r.color) + '</dd>' +
         '<dt>Weave</dt><dd>' + escapeHtml(r.typeName) + ' (' + escapeHtml(r.typeCode) + ')</dd>' +
@@ -548,6 +553,33 @@
     $('#closeModalBtn').addEventListener('click', closeModal);
     $('#printTagBtn').addEventListener('click', function(){ printTag(r); });
     $('#downloadTagBtn').addEventListener('click', function(){ downloadTag(r); });
+
+    $('#modalPhotoInput').addEventListener('change', async function(e){
+      var file = e.target.files && e.target.files[0];
+      if (!file) return;
+      var input = e.target;
+      var status = $('#modalPhotoStatus');
+      input.disabled = true;
+      status.textContent = 'Uploading photo…';
+      try{
+        var uploaded = await uploadPhoto(file, r.productId);
+        var oldPath = r.photoPath;
+        await db.collection('sarees').doc(r.productId).update({
+          photoUrl: uploaded.url,
+          photoPath: uploaded.path
+        });
+        if (oldPath && oldPath !== uploaded.path){
+          storage.ref(oldPath).delete().catch(function(){});
+        }
+        showToast('Photo saved for ' + r.productId);
+        openDetail(r.productId); // refresh the modal so the new photo shows
+      }catch(err){
+        status.textContent = (err && err.message === 'too_large')
+          ? 'That photo is over 20MB — try a smaller one.'
+          : 'Could not upload that photo — try again.';
+        input.disabled = false;
+      }
+    });
 
     var markSoldBtn = $('#markSoldBtn');
     if (markSoldBtn){
