@@ -1,6 +1,22 @@
 (function(){
   "use strict";
 
+  // Safety net for #bootLoading (see initAuth below): scheduled as the very
+  // first thing this script does, independent of everything else that
+  // follows, so it fires no matter what goes wrong before auth state
+  // resolves — a stale cached script from a previous deploy that doesn't
+  // know #bootLoading exists, a slow/broken network, an unrelated error
+  // elsewhere in this file. Without it, any of those leave the user
+  // stuck on the loading splash forever with no way forward.
+  setTimeout(function(){
+    var boot = document.getElementById('bootLoading');
+    if (boot && !boot.hidden){
+      boot.hidden = true;
+      var gate = document.getElementById('authGate');
+      if (gate) gate.hidden = false;
+    }
+  }, 6000);
+
   // =========================================================================
   // SETUP: paste the config from your Firebase project (Project settings ->
   // General -> Your apps -> Web app) below. See the setup notes delivered
@@ -522,7 +538,7 @@
       '<span class="pill ' + (r.status === 'sold' ? 'sold' : 'available') + '" style="margin-top:6px;">' + (r.status === 'sold' ? 'Sold' : 'Available') + '</span>' +
       '<div class="field" style="margin-top:12px;">' +
         '<label for="modalPhotoInput">' + (r.photoUrl ? 'Replace photo' : 'Add photo') + '</label>' +
-        '<input type="file" id="modalPhotoInput" accept="image/*" capture="environment" />' +
+        '<input type="file" id="modalPhotoInput" accept="image/*" />' +
         '<p class="hint" id="modalPhotoStatus" style="margin:4px 0 0;"></p>' +
       '</div>' +
       '<dl class="kv">' +
